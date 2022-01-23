@@ -2,74 +2,99 @@
 #include <DallasTemperature.h> //Install Manager: DS18B20 DallasTemperature
 #include <virtuabotixRTC.h> //https://github.com/chrisfryer78/ArduinoRTClibrary
 #include <LiquidCrystal_I2C.h>//https://github.com/fdebrabander/Arduino-LiquidCrystal-I2C-library
+#include <Adafruit_BME280.h> //Install Manager: bme280
 #include <Time.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
 
-LiquidCrystal_I2C lcd(0x3F, 16, 2);   // 0der (0x27)  Hier wird festgelegt um was für einen Display es sich handelt. In diesem Fall einer mit 16 Zeichen in 2 Zeilen.
-OneWire oneWire(2);// Pin 2 für Temp Sensoren
+LiquidCrystal_I2C lcd(0x3F, 16, 2); //I2C address 0x3F or 0x27 - 16 characters in 2 lines
+OneWire oneWire(2);// Pin 2 temp sensors
 DallasTemperature sensors(&oneWire);
 virtuabotixRTC myRTC(6, 7, 8);
 
-int tempSensorAmount = 2;
+Adafruit_BME280 bme;
+int tempSensorAmount = 3;
+boolean mode = true; // to change the LCD preview
 
 void setup(void) {
   Serial.begin(9600);
 
-  sensors.begin();//Starte die Sensoren
-  sensors.setResolution(12);
-  
   pinMode(SS, OUTPUT);
 
-  lcd.begin(); //Startet das LCD Display
-  lcd.setCursor(0,0);
-  lcd.print(F("Init SD card"));
-  Serial.print(F("Init SD card..."));
+  sensors.begin();
+  sensors.setResolution(12);
 
-  if (!SD.begin(4)) {// Pin 4 wird genutzt
+  if (!bme.begin(0x76, &Wire)) { //I2C address 0x76 or 0x77
+    Serial.println(F("BME280 sensor not found, wrong address?"));
+    while (true);
+  }
+
+  lcd.begin(); //LCD starting...
+  
+  lcd.setCursor(0,0);
+  Serial.print(F("Init SD card..."));
+  if (!SD.begin(4)) {// SD Shield Pin 4 in use
     Serial.println(F("Card failed, or not present"));
-    lcd.print(F("SD Error"));
+    lcd.print(F("Er"));
     while(1) {};
   }
   Serial.println(F("SD initialized."));
   lcd.setCursor(0,0);
-  lcd.print(F("SD OK;          "));
-  Serial.println("SD Card OK.");
+  lcd.print("0K");
+  Serial.println(F("SD Card OK."));
   
   File dataFile = SD.open("datalog.txt", FILE_WRITE);
-  if (dataFile) {//Wenn Datein vorhanden:
-      dataFile.println(F("Time,Temp1,Temp2,WaterLevel"));
+  if (dataFile) {//if data exists:
+      dataFile.println(F("Time,Temp1,Temp2,Temp3,WaterLevel,Temp4,Humidity,Pressure"));
       dataFile.close();
   }
   //seconds, minutes, hours, day of the week, day of the month, month, year
-  //myRTC.setDS1302Time(1, 26, 23, 5, 12, 11, 2021);
+  //smyRTC.setDS1302Time(0, 56, 17, 3, 19, 1, 2022);
 }
 
 void loop(void) {
-  int waterLevel = 0;
   String dataString = "";
-  float temp[tempSensorAmount];
-  waterLevel = analogRead(3);
+
+  lcd.setCursor(0,1);
+  lcd.print("                ");
+  lcd.setCursor(0,0);
+  lcd.print("                ");
   
-  Serial.print("Water-Level: ");
-  Serial.println(waterLevel);
+  sensors.requestTemperatures(); // load temperature
+  for(int x=0;x < tempSensorAmount; x++) {
+    float temp = sensors.getTempCByIndex(x);
+    Serial.println("Temp " + String(x+1) + ": " + temp);
+    if(mode){
+      lcd.setCursor(0+x*5,1);
+      lcd.print(temp,1);
+    }
+    dataString += String(temp) + ",";
+  }
+
+  int waterLevel = analogRead(3);
+  Serial.println("Water-Level: " + String(waterLevel));
   lcd.setCursor(13,0);
   lcd.print(waterLevel);
-  
-  sensors.requestTemperatures(); // Laden der Temperaturen
 
-  for(int x=0;x < tempSensorAmount; x++) {
-    temp[x]=sensors.getTempCByIndex(x);
-    Serial.println("Temp " + String(x) + ": " + temp[x]);
-    lcd.setCursor(0+x*5,1);
-    lcd.print(temp[x],1);
-    dataString += String(temp[x]) + ",";
+  float temperature = bme.readTemperature();
+  float hum = bme.readHumidity();
+  float pressure = bme.readPressure()/100;  // Pa --> hPa 
+  Serial.println("Humidity: " + String(hum)+ " Temperature: " + String(temperature) + " Pressure: " + String(pressure));
+  lcd.setCursor(3,0);
+  lcd.print(String(round(hum))+"%");
+  if(!mode){
+    lcd.setCursor(0,1);
+    lcd.print(String(temperature)+ " " + pressure + "hPa");
   }
+  
   lcd.setCursor(7,0);
   myRTC.updateTime();
   lcd.print(String(myRTC.hours) + ":" + String(myRTC.minutes));
-  WriteText(Time() + "," + dataString + waterLevel);
+  Serial.print(String(myRTC.hours) + ":" + String(myRTC.minutes));
+  WriteText(Time() + "," + dataString + waterLevel + "," + temperature + "," + hum + "," + pressure);
+  Serial.println(" ");
+  mode=!mode;
   delay(30000);
 }
 
@@ -78,7 +103,7 @@ void WriteText(String txt){
   if (myFile) {
     myFile.println(txt);
     myFile.close();
-  } else {Serial.println(F("error opening datalog.txt.txt"));}// Fehler wenn die Datei nicht geöffnet werden kann
+  } else {Serial.println(F("error opening datalog.txt"));}//error can't open datalog.txt
 }
 
 String Time(){
